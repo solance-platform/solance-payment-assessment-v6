@@ -5,6 +5,7 @@ import com.solance.assessment.domain.TransactionStatus;
 import com.solance.assessment.exception.ErrorCode;
 import com.solance.assessment.exception.PaymentException;
 import com.solance.assessment.repository.TransactionRepository;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -19,8 +20,7 @@ public class TransactionService {
       Map.of(
           TransactionStatus.PENDING_APPROVAL,
               Set.of(TransactionStatus.SUBMITTED, TransactionStatus.CANCELLED),
-          TransactionStatus.SUBMITTED,
-              Set.of(TransactionStatus.PROCESSING, TransactionStatus.CANCELLED),
+          TransactionStatus.SUBMITTED, Set.of(TransactionStatus.PROCESSING),
           TransactionStatus.PROCESSING,
               Set.of(TransactionStatus.COMPLETED, TransactionStatus.FAILED));
 
@@ -41,18 +41,31 @@ public class TransactionService {
   /**
    * Progress a transaction to a new status.
    *
+   * <p>Updates come from the bank's webhook, which can redeliver the same update. An update to the
+   * transaction's current status is therefore accepted as a no-op. Synchronized so the
+   * check-then-update is atomic for the in-memory repository.
+   *
    * @param transactionId the transaction to update
    * @param newStatus the target status
    * @return the updated transaction
    */
-  public Transaction progressTransaction(UUID transactionId, TransactionStatus newStatus) {
+  public synchronized Transaction progressTransaction(
+      UUID transactionId, TransactionStatus newStatus) {
+    if (transactionId == null || newStatus == null) {
+      throw new PaymentException(
+          ErrorCode.INVALID_INPUT, "Transaction ID and target status are required");
+    }
     Transaction transaction =
         transactionRepository
             .findById(transactionId)
             .orElseThrow(
                 () ->
                     new PaymentException(
-                        ErrorCode.INVALID_INPUT, "Unknown transaction: " + transactionId));
+                        ErrorCode.TRANSACTION_NOT_FOUND, "Unknown transaction: " + transactionId));
+
+    if (transaction.getStatus() == newStatus) {
+      return transaction;
+    }
 
     Set<TransactionStatus> allowed =
         ALLOWED_TRANSITIONS.getOrDefault(transaction.getStatus(), Set.of());
@@ -63,6 +76,7 @@ public class TransactionService {
     }
 
     transaction.setStatus(newStatus);
+    transaction.setUpdatedAt(Instant.now());
     transactionRepository.save(transaction);
     return transaction;
   }

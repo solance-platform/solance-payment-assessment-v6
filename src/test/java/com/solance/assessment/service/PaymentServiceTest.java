@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.solance.assessment.api.model.PaymentRequest;
 import com.solance.assessment.api.model.PaymentResponse;
+import com.solance.assessment.domain.PaymentInstrument;
+import com.solance.assessment.domain.PaymentInstrumentStatus;
+import com.solance.assessment.domain.PaymentInstrumentType;
 import com.solance.assessment.domain.PaymentScheme;
 import com.solance.assessment.domain.SupportedCurrency;
 import com.solance.assessment.domain.Transaction;
@@ -254,6 +257,59 @@ class PaymentServiceTest {
               ex ->
                   assertThat(((PaymentException) ex).getErrorCode())
                       .isEqualTo(ErrorCode.INVALID_CURRENCY));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // README rules without a pre-existing test
+  // ---------------------------------------------------------------------------
+
+  @Nested
+  @DisplayName("README rules")
+  class ReadmeRules {
+
+    private static final UUID USD_INSTRUMENT =
+        UUID.fromString("44444444-4444-4444-4444-444444444444");
+
+    @Test
+    @DisplayName("should route USD payments via SWIFT (only EUR uses SEPA)")
+    void shouldUseSwiftForUsdPayments() {
+      PaymentInstrumentRepository instrumentRepository = new PaymentInstrumentRepository();
+      instrumentRepository.save(
+          PaymentInstrument.builder()
+              .id(USD_INSTRUMENT)
+              .clientId(CLIENT_A)
+              .iban("DE89370400440532013000")
+              .currency(SupportedCurrency.USD)
+              .balance(new BigDecimal("100000"))
+              .status(PaymentInstrumentStatus.ACTIVE)
+              .type(PaymentInstrumentType.IBAN)
+              .build());
+      TransactionRepository txRepository = new TransactionRepository();
+      PaymentService service = new PaymentService(instrumentRepository, txRepository);
+
+      PaymentRequest request = validEurRequest();
+      request.setPaymentInstrumentId(USD_INSTRUMENT);
+      request.setCurrency(SupportedCurrency.USD);
+
+      PaymentResponse response = service.submitPayment(CLIENT_A, request);
+
+      Transaction tx = txRepository.findById(response.getTransactionId()).orElseThrow();
+      assertThat(tx.getPaymentScheme()).isEqualTo(PaymentScheme.SWIFT);
+    }
+
+    @Test
+    @DisplayName("should reject null payment instrument ID with INVALID_INPUT, not a 500")
+    void shouldRejectNullInstrumentId() {
+      PaymentRequest request = validEurRequest();
+      request.setPaymentInstrumentId(null);
+
+      assertThatThrownBy(() -> paymentService.submitPayment(CLIENT_A, request))
+          .isInstanceOf(PaymentException.class)
+          .satisfies(
+              ex ->
+                  assertThat(((PaymentException) ex).getErrorCode())
+                      .isEqualTo(ErrorCode.INVALID_INPUT));
     }
   }
 }

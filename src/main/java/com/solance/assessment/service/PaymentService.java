@@ -32,6 +32,10 @@ public class PaymentService {
   }
 
   public PaymentResponse submitPayment(UUID clientId, PaymentRequest request) {
+    if (request.getPaymentInstrumentId() == null) {
+      throw new PaymentException(ErrorCode.INVALID_INPUT, "Payment instrument ID is required");
+    }
+
     PaymentInstrument instrument =
         instrumentRepository
             .findById(request.getPaymentInstrumentId())
@@ -85,10 +89,10 @@ public class PaymentService {
   }
 
   private void validateAmount(BigDecimal amount, BigDecimal balance) {
-    if (amount == null || amount.signum() < 0) {
+    if (amount == null || amount.signum() <= 0) {
       throw new PaymentException(ErrorCode.INVALID_AMOUNT, "Amount must be greater than zero");
     }
-    if (amount.compareTo(balance) >= 0) {
+    if (amount.compareTo(balance) > 0) {
       throw new PaymentException(
           ErrorCode.INSUFFICIENT_FUNDS,
           "Amount " + amount + " exceeds available balance " + balance);
@@ -99,6 +103,6 @@ public class PaymentService {
     if (currency == null) {
       throw new PaymentException(ErrorCode.INVALID_CURRENCY, "Currency is required");
     }
-    return currency == SupportedCurrency.GBP ? PaymentScheme.SWIFT : PaymentScheme.SEPA;
+    return currency == SupportedCurrency.EUR ? PaymentScheme.SEPA : PaymentScheme.SWIFT;
   }
 }
